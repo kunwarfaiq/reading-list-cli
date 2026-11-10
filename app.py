@@ -1,10 +1,60 @@
 """Search Open Library for books by title or author."""
 
+import json
+from pathlib import Path
+
 import requests
 
 API_URL = "https://openlibrary.org/search.json"
 USER_AGENT = "ReadingListCLI/1.0 (student project)"
 RESULT_LIMIT = 10
+READING_LIST_FILE = Path("reading_list.json")
+
+
+def load_reading_list(path=READING_LIST_FILE):
+    """Load saved books, returning an empty list if no file exists yet."""
+    try:
+        with path.open(encoding="utf-8") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return []
+
+
+def save_reading_list(books, path=READING_LIST_FILE):
+    """Save reading-list books as formatted JSON."""
+    with path.open("w", encoding="utf-8") as file:
+        json.dump(books, file, indent=2, ensure_ascii=False)
+
+
+def book_identity(book):
+    """Build a stable identity from a work key or title and authors."""
+    if book.get("key"):
+        return book["key"].casefold()
+
+    title = " ".join(book.get("title", "").casefold().split())
+    authors = ", ".join(book.get("author_name", [])).casefold()
+    if title or authors:
+        return f"{title}|{authors}"
+    return None
+
+
+def add_book(books, book):
+    """Add a book once, storing only the fields needed by the app."""
+    identity = book_identity(book)
+    if identity and any(book_identity(saved) == identity for saved in books):
+        print("That book is already in your reading list.")
+        return False
+
+    books.append(
+        {
+            "title": book.get("title", "Unknown title"),
+            "author_name": book.get("author_name", []),
+            "first_publish_year": book.get("first_publish_year"),
+            "key": book.get("key"),
+            "read": False,
+        }
+    )
+    return True
 
 
 def search_books(search_type, query):
@@ -56,8 +106,8 @@ def select_result(books):
     return books[number - 1]
 
 
-def search_flow():
-    """Search by title or author and confirm a selected result."""
+def search_flow(reading_list):
+    """Search by title or author and add the selected book."""
     print("Search Open Library by:")
     print("1. Title")
     print("2. Author")
@@ -77,11 +127,14 @@ def search_flow():
     selected = select_result(books)
     if selected:
         title = selected.get("title", "Unknown title")
-        print(f"Selected: {title}")
+        if add_book(reading_list, selected):
+            save_reading_list(reading_list)
+            print(f"Added to your reading list: {title}")
 
 
 def main():
     """Run the search menu until the user chooses to quit."""
+    reading_list = load_reading_list()
     while True:
         print("\nReading List")
         print("1. Search for a book")
@@ -89,7 +142,7 @@ def main():
         choice = input("Choose an option: ").strip()
 
         if choice == "1":
-            search_flow()
+            search_flow(reading_list)
         elif choice == "2":
             print("Goodbye!")
             break
