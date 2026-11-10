@@ -87,6 +87,20 @@ def print_results(books):
         print(f"{number}. {title} - {authors} ({year})")
 
 
+def print_reading_list(books):
+    """Print saved books and whether each has been read."""
+    if not books:
+        print("Your reading list is empty.")
+        return
+
+    for number, book in enumerate(books, start=1):
+        status = "Read" if book.get("read", False) else "Unread"
+        title = book.get("title", "Unknown title")
+        authors = ", ".join(book.get("author_name", [])) or "Unknown author"
+        year = book.get("first_publish_year") or "Year unknown"
+        print(f"{number}. {title} - {authors} ({year}) [{status}]")
+
+
 def select_result(books):
     """Prompt for a result number and return that book, or None to cancel."""
     if not books:
@@ -104,6 +118,57 @@ def select_result(books):
         print("That number is not in the results.")
         return None
     return books[number - 1]
+
+
+def select_reading_list_book(books):
+    """Prompt for a saved book number and return that book, or None."""
+    if not books:
+        print("Your reading list is empty.")
+        return None
+
+    print_reading_list(books)
+    choice = input("Choose a book number, or 0 to cancel: ").strip()
+    if not choice.isdigit():
+        print("Please enter a number from the list, or 0 to cancel.")
+        return None
+
+    number = int(choice)
+    if number == 0:
+        return None
+    if number > len(books):
+        print("That number is not in your reading list.")
+        return None
+    return books[number - 1]
+
+
+def update_read_status(books):
+    """Mark a selected saved book as read or unread and persist the change."""
+    book = select_reading_list_book(books)
+    if book is None:
+        return
+
+    print("1. Mark as read")
+    print("2. Mark as unread")
+    choice = input("Choose an option: ").strip()
+    if choice not in {"1", "2"}:
+        print("Please choose 1 or 2.")
+        return
+
+    book["read"] = choice == "1"
+    save_reading_list(books)
+    status = "read" if book["read"] else "unread"
+    print(f"Marked as {status}: {book.get('title', 'Unknown title')}")
+
+
+def remove_book(books):
+    """Remove a selected saved book and persist the change."""
+    book = select_reading_list_book(books)
+    if book is None:
+        return
+
+    books.remove(book)
+    save_reading_list(books)
+    print(f"Removed: {book.get('title', 'Unknown title')}")
 
 
 def search_flow(reading_list):
@@ -138,16 +203,25 @@ def main():
     while True:
         print("\nReading List")
         print("1. Search for a book")
-        print("2. Quit")
+        print("2. View my reading list")
+        print("3. Mark a book read or unread")
+        print("4. Remove a book")
+        print("5. Quit")
         choice = input("Choose an option: ").strip()
 
         if choice == "1":
             search_flow(reading_list)
         elif choice == "2":
+            print_reading_list(reading_list)
+        elif choice == "3":
+            update_read_status(reading_list)
+        elif choice == "4":
+            remove_book(reading_list)
+        elif choice == "5":
             print("Goodbye!")
             break
         else:
-            print("Please choose 1 or 2.")
+            print("Please choose a number from 1 to 5.")
 
 
 if __name__ == "__main__":
