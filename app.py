@@ -37,8 +37,27 @@ def print_results(books):
         print(f"{number}. {title} - {authors} ({year})")
 
 
-def main():
-    """Ask the user what to search for and display matching books."""
+def select_result(books):
+    """Prompt for a result number and return that book, or None to cancel."""
+    if not books:
+        return None
+
+    choice = input("Choose a book number to select, or 0 to cancel: ").strip()
+    if not choice.isdigit():
+        print("Please enter a number from the list, or 0 to cancel.")
+        return None
+
+    number = int(choice)
+    if number == 0:
+        return None
+    if number > len(books):
+        print("That number is not in the results.")
+        return None
+    return books[number - 1]
+
+
+def search_flow():
+    """Search by title or author and confirm a selected result."""
     print("Search Open Library by:")
     print("1. Title")
     print("2. Author")
@@ -53,7 +72,29 @@ def main():
         print("Search text cannot be empty.")
         return
 
-    print_results(search_books(search_type, query))
+    books = search_books(search_type, query)
+    print_results(books)
+    selected = select_result(books)
+    if selected:
+        title = selected.get("title", "Unknown title")
+        print(f"Selected: {title}")
+
+
+def main():
+    """Run the search menu until the user chooses to quit."""
+    while True:
+        print("\nReading List")
+        print("1. Search for a book")
+        print("2. Quit")
+        choice = input("Choose an option: ").strip()
+
+        if choice == "1":
+            search_flow()
+        elif choice == "2":
+            print("Goodbye!")
+            break
+        else:
+            print("Please choose 1 or 2.")
 
 
 if __name__ == "__main__":
