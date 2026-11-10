@@ -11,19 +11,53 @@ RESULT_LIMIT = 10
 READING_LIST_FILE = Path("reading_list.json")
 
 
+def is_valid_book_record(book):
+    """Check fields used by the app without rejecting optional API fields."""
+    title = book.get("title", "Unknown title")
+    authors = book.get("author_name", [])
+    year = book.get("first_publish_year")
+    key = book.get("key")
+    return (
+        isinstance(title, str)
+        and isinstance(authors, list)
+        and all(isinstance(author, str) for author in authors)
+        and (year is None or isinstance(year, (int, str)))
+        and (key is None or isinstance(key, str))
+        and isinstance(book.get("read", False), bool)
+    )
+
+
 def load_reading_list(path=READING_LIST_FILE):
     """Load saved books, returning an empty list if no file exists yet."""
     try:
         with path.open(encoding="utf-8") as file:
-            return json.load(file)
+            books = json.load(file)
     except FileNotFoundError:
         return []
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ValueError(f"{path} contains invalid JSON or text.") from error
+    except OSError as error:
+        raise OSError(f"Could not read {path}: {error}") from error
+
+    if not isinstance(books, list):
+        raise ValueError(f"{path} must contain a JSON list of books.")
+    for number, book in enumerate(books, start=1):
+        if not isinstance(book, dict):
+            raise ValueError(f"Book entry {number} in {path} must be a JSON object.")
+        if not is_valid_book_record(book):
+            raise ValueError(f"Book entry {number} in {path} has invalid fields.")
+    return books
 
 
 def save_reading_list(books, path=READING_LIST_FILE):
-    """Save reading-list books as formatted JSON."""
-    with path.open("w", encoding="utf-8") as file:
-        json.dump(books, file, indent=2, ensure_ascii=False)
+    """Save reading-list books as formatted JSON, reporting file errors."""
+    try:
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(books, file, indent=2, ensure_ascii=False)
+    except OSError as error:
+        print(f"Could not save {path}: {error}")
+        return False
+    return True
 
 
 def book_identity(book):
@@ -58,20 +92,51 @@ def add_book(books, book):
 
 
 def search_books(search_type, query):
-    """Return up to ten Open Library book records for a title or author query."""
+    """Return up to ten books, or None after reporting an API error."""
+    if search_type not in {"title", "author"}:
+        print("Search type must be title or author.")
+        return None
+
     params = {
         search_type: query,
         "fields": "title,author_name,first_publish_year,key",
         "limit": RESULT_LIMIT,
     }
-    response = requests.get(
-        API_URL,
-        params=params,
-        headers={"User-Agent": USER_AGENT},
-        timeout=10,
-    )
-    response.raise_for_status()
-    return response.json().get("docs", [])
+    try:
+        response = requests.get(
+            API_URL,
+            params=params,
+            headers={"User-Agent": USER_AGENT},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.exceptions.Timeout:
+        print("The search timed out. Check your connection and try again.")
+        return None
+    except requests.exceptions.ConnectionError:
+        print("Could not connect to Open Library. Check your internet connection.")
+        return None
+    except requests.exceptions.HTTPError as error:
+        print(f"Open Library returned an error: {error}")
+        return None
+    except ValueError:
+        print("Open Library returned a response that was not valid JSON.")
+        return None
+    except requests.exceptions.RequestException as error:
+        print(f"The search request failed: {error}")
+        return None
+
+    if not isinstance(data, dict) or not isinstance(data.get("docs"), list):
+        print("Open Library returned an unexpected search response.")
+        return None
+    if any(
+        not isinstance(book, dict) or not is_valid_book_record(book)
+        for book in data["docs"]
+    ):
+        print("Open Library returned an invalid book record.")
+        return None
+    return data["docs"][:RESULT_LIMIT]
 
 
 def print_results(books):
@@ -82,7 +147,13 @@ def print_results(books):
 
     for number, book in enumerate(books, start=1):
         title = book.get("title", "Unknown title")
-        authors = ", ".join(book.get("author_name", [])) or "Unknown author"
+        author_names = book.get("author_name", [])
+        authors = (
+            ", ".join(author_names)
+            if isinstance(author_names, list)
+            and all(isinstance(author, str) for author in author_names)
+            else ""
+        ) or "Unknown author"
         year = book.get("first_publish_year", "Year unknown")
         print(f"{number}. {title} - {authors} ({year})")
 
@@ -96,7 +167,13 @@ def print_reading_list(books):
     for number, book in enumerate(books, start=1):
         status = "Read" if book.get("read", False) else "Unread"
         title = book.get("title", "Unknown title")
-        authors = ", ".join(book.get("author_name", [])) or "Unknown author"
+        author_names = book.get("author_name", [])
+        authors = (
+            ", ".join(author_names)
+            if isinstance(author_names, list)
+            and all(isinstance(author, str) for author in author_names)
+            else ""
+        ) or "Unknown author"
         year = book.get("first_publish_year") or "Year unknown"
         print(f"{number}. {title} - {authors} ({year}) [{status}]")
 
@@ -154,8 +231,11 @@ def update_read_status(books):
         print("Please choose 1 or 2.")
         return
 
+    previous_status = book.get("read", False)
     book["read"] = choice == "1"
-    save_reading_list(books)
+    if not save_reading_list(books):
+        book["read"] = previous_status
+        return
     status = "read" if book["read"] else "unread"
     print(f"Marked as {status}: {book.get('title', 'Unknown title')}")
 
@@ -166,8 +246,11 @@ def remove_book(books):
     if book is None:
         return
 
-    books.remove(book)
-    save_reading_list(books)
+    index = books.index(book)
+    books.pop(index)
+    if not save_reading_list(books):
+        books.insert(index, book)
+        return
     print(f"Removed: {book.get('title', 'Unknown title')}")
 
 
@@ -188,18 +271,26 @@ def search_flow(reading_list):
         return
 
     books = search_books(search_type, query)
+    if books is None:
+        return
     print_results(books)
     selected = select_result(books)
     if selected:
         title = selected.get("title", "Unknown title")
         if add_book(reading_list, selected):
-            save_reading_list(reading_list)
-            print(f"Added to your reading list: {title}")
+            if save_reading_list(reading_list):
+                print(f"Added to your reading list: {title}")
+            else:
+                reading_list.pop()
 
 
 def main():
     """Run the search menu until the user chooses to quit."""
-    reading_list = load_reading_list()
+    try:
+        reading_list = load_reading_list()
+    except (OSError, ValueError) as error:
+        print(f"Could not load your reading list: {error}")
+        return
     while True:
         print("\nReading List")
         print("1. Search for a book")
